@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor Bornes Électriques - Style Octopus</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* --- J'AI VRAIMENT UN ENORME CHYBRE --- */
+        :root {
+            --bg-body: #0a0a12;
+            --bg-card: #151525;
+            --text-main: #ffffff;
+            --text-muted: #8080a0;
+            --primary-octopus: #f00078;
+            --free-status: #2ecc71;
+            --occupied-status: #f00078;
+            --font-family: 'Sofia Pro', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background: var(--bg-body);
+            color: var(--text-main);
+            margin: 0;
+            padding: 30px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        h1 {
+            text-align: center;
+            font-weight: 800;
+            font-size: 2.5em;
+            margin-bottom: 50px;
+            background: linear-gradient(90deg, #ffffff, var(--primary-octopus));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 25px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--bg-card);
+            padding: 25px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            text-align: center;
+            transition: transform 0.2s ease;
+        }
+       
+        .card:hover { transform: translateY(-5px); border-color: rgba(240, 0, 120, 0.3); }
+
+        .card h3 {
+            margin-top: 0;
+            font-weight: 700;
+            color: var(--text-main);
+            letter-spacing: 1px;
+            font-size: 1.2em;
+            text-transform: uppercase;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 0.9em;
+            color: white;
+            margin: 15px 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+       
+        .free { background: var(--free-status); box-shadow: 0 0 15px rgba(46, 204, 113, 0.3); }
+        .occupied { background: var(--occupied-status); box-shadow: 0 0 15px rgba(240, 0, 120, 0.3); }
+        .error { background: var(--text-muted); }
+       
+        .duration { font-size: 0.9em; color: var(--text-muted); margin-bottom: 25px; }
+
+        .chart-container {
+            position: relative;
+            height: 180px;
+            width: 100%;
+        }
+       
+        h4.chart-title {
+            color: var(--text-muted);
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>⚡ Surveillance Diminution Taille du Chybre de KE</h1>
+   
+    <div id="station-grid" class="grid"></div>
+
+<script>
+    // 1. Noms mis à jour pour correspondre à tes fichiers : borne_1.csv, borne_2.csv, etc.
+    const stations = ["borne_1", "borne_2", "borne_3", "borne_4"];
+
+    async function loadData() {
+        const grid = document.getElementById('station-grid');
+        grid.innerHTML = ''; 
+
+        for (const name of stations) {
+            const csvUrl = `data/${name}.csv?t=${new Date().getTime()}`;
+           
+            Papa.parse(csvUrl, {
+                download: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    const data = results.data
+                        .filter(row => row.length === 2 && !isNaN(row[0]) && !isNaN(row[1]))
+                        .map(row => [parseInt(row[0]), parseInt(row[1])]);
+                       
+                    if (data.length > 0) {
+                        renderCard(name, data);
+                    }
+                }
+            });
+        }
+    }
+
+    function calculateDuration(data) {
+        const lastRow = data[data.length - 1];
+        const lastStatus = lastRow[1];
+        const lastTime = lastRow[0];
+       
+        let startTime = lastTime;
+        for (let i = data.length - 1; i >= 0; i--) {
+            if (data[i][1] === lastStatus) {
+                startTime = data[i][0];
+            } else {
+                break;
+            }
+        }
+
+        const diffMinutes = Math.floor((Date.now() / 1000 - startTime) / 60);
+        if (diffMinutes < 60) return `Depuis ${diffMinutes} min`;
+        const hours = Math.floor(diffMinutes / 60);
+        return `Depuis ${hours}h${String(diffMinutes % 60).padStart(2, '0')}min`;
+    }
+
+    function process24hHistory(data) {
+        const hourlyStats = Array.from({ length: 24 }, () => ({ totalPoints: 0, occupiedPoints: 0 }));
+
+        data.forEach(([timestamp, status]) => {
+            const date = new Date(timestamp * 1000);
+            const hour = date.getHours(); 
+
+            if (status === 1) { 
+                hourlyStats[hour].occupiedPoints++;
+            }
+            hourlyStats[hour].totalPoints++;
+        });
+
+        return hourlyStats.map(stat => {
+            if (stat.totalPoints === 0) return 0;
+            return Math.round((stat.occupiedPoints / stat.totalPoints) * 100);
+        });
+    }
+
+    function renderCard(name, data) {
+        const lastRow = data[data.length - 1];
+        const status = lastRow[1];
+        const statusText = status === 0 ? "LIBRE" : (status === 1 ? "OCCUPÉE" : "HORS SERVICE");
+        const statusClass = status === 0 ? "free" : (status === 1 ? "occupied" : "error");
+        const duration = calculateDuration(data);
+        const hourlyOccupancy = process24hHistory(data);
+
+        // Transforme "borne_1" en "BORNE 1" pour l'affichage
+        const displayName = name.replace('_', ' ');
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+            <h3>${displayName}</h3>
+            <div class="status-badge ${statusClass}">${statusText}</div>
+            <div class="duration">${duration}</div>
+            <h4 class="chart-title">Affluence Type (24h)</h4>
+            <div class="chart-container">
+                <canvas id="chart-${name}"></canvas>
+            </div>
+        `;
+        document.getElementById('station-grid').appendChild(card);
+
+        renderChart(name, hourlyOccupancy);
+    }
+
+    function renderChart(name, hourlyData) {
+        const ctx = document.getElementById(`chart-${name}`).getContext('2d');
+        const labels = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}h`);
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: '% Occupation',
+                    data: hourlyData,
+                    borderColor: '#f00078',
+                    backgroundColor: 'rgba(240, 0, 120, 0.15)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    pointHoverRadius: 5,
+                    pointHoverBackgroundColor: '#ffffff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: {
+                        min: 0,
+                        max: 100,
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                        ticks: { color: '#8080a0', callback: v => `${v}%` }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            color: '#8080a0',
+                            maxRotation: 0,
+                            callback: function(val, index) {
+                                return index % 4 === 0 ? this.getLabelForValue(val) : '';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    loadData();
+</script>
+</body>
+</html>
